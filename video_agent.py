@@ -3,17 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
-import re
-from datetime import datetime
-from pathlib import Path
 
-from break_records_agent.config import AgentConfig
-from break_records_agent.overlays import generate_overlays
-from break_records_agent.profiles import DemographicProfile, get_profile, list_profiles
-from break_records_agent.video import compose_portrait_video
-from break_records_agent.youtube import download_clips, search_clips
+from break_records_agent.profiles import list_profiles
+from break_records_agent.runner import RunRequest, run_generation_sync
 
 
 LOGGER = logging.getLogger("break_records_agent")
@@ -54,21 +47,8 @@ def parse_args() -> argparse.Namespace:
         help="Seconds to keep from each clip. Three 10s clips produce a 30s output.",
     )
     parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("output"),
-        help="Directory where final MP4 files are written.",
-    )
-    parser.add_argument(
-        "--work-dir",
-        type=Path,
-        default=Path("work"),
-        help="Directory for downloaded and rendered intermediate clips.",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        help="Optional exact output MP4 path. Defaults to output/<artist>_<timestamp>.mp4.",
+        "--drive-folder-id",
+        help="Optional Google Drive folder ID for the uploaded MP4.",
     )
     parser.add_argument(
         "--mock-overlays",
@@ -105,88 +85,6 @@ def print_profiles() -> None:
         print(f"  Mood: {profile.mood}")
 
 
-def build_profile(args: argparse.Namespace) -> DemographicProfile:
-    base = get_profile(args.profile)
-    if not any([args.age_range, args.genres, args.mood]):
-        return base
-
-    genres = tuple(
-        item.strip()
-        for item in (args.genres or ",".join(base.genres)).split(",")
-        if item.strip()
-    )
-    return DemographicProfile(
-        key="custom",
-        label=f"Custom profile based on {base.label}",
-        age_range=args.age_range or base.age_range,
-        genres=genres,
-        mood=args.mood or base.mood,
-    )
-
-
-def default_output_path(artist: str, output_dir: Path) -> Path:
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    slug = re.sub(r"[^a-zA-Z0-9]+", "_", artist.strip().lower()).strip("_")
-    return output_dir / f"{slug or 'artist'}_{timestamp}.mp4"
-
-
-def build_music_query(artist: str, profile: DemographicProfile) -> str:
-    genre_terms = " ".join(profile.genres)
-    return f"{artist} official music video live performance {genre_terms} {profile.mood}"
-
-
-async def run_agent(args: argparse.Namespace) -> Path:
-    if not args.artist:
-        raise SystemExit("--artist is required unless --list-profiles is used.")
-
-    profile = build_profile(args)
-    output_path = args.output or default_output_path(args.artist, args.output_dir)
-    config = AgentConfig(
-        clip_count=args.clip_count,
-        clip_seconds=args.clip_seconds,
-        output_dir=args.output_dir,
-        search_limit=args.search_limit,
-        work_dir=args.work_dir,
-    )
-
-    query = build_music_query(args.artist, profile)
-    LOGGER.info("Searching YouTube for %s clips: %s", config.search_limit, query)
-    candidates = await search_clips(query, limit=config.search_limit)
-    if not candidates:
-        raise RuntimeError("No YouTube results were found. Try a different artist or profile.")
-
-    LOGGER.info("Downloading up to %s usable clips.", config.clip_count)
-    downloaded = await download_clips(
-        candidates=candidates,
-        work_dir=config.download_dir,
-        clip_seconds=config.clip_seconds,
-        max_clips=config.clip_count,
-    )
-    if len(downloaded) < 2:
-        raise RuntimeError(
-            f"Only downloaded {len(downloaded)} usable clip(s). At least 2 are needed."
-        )
-
-    LOGGER.info("Generating text overlays.")
-    overlays = await generate_overlays(
-        artist=args.artist,
-        profile=profile,
-        clips=downloaded,
-        mock=args.mock_overlays,
-    )
-
-    LOGGER.info("Composing final portrait MP4.")
-    result_path = compose_portrait_video(
-        clips=downloaded,
-        overlays=overlays,
-        output_path=output_path,
-        render_dir=config.render_dir,
-        clip_seconds=config.clip_seconds,
-    )
-    LOGGER.info("Finished: %s", result_path)
-    return result_path
-
-
 def main() -> None:
     args = parse_args()
     configure_logging(args.log_level)
@@ -195,8 +93,26 @@ def main() -> None:
         print_profiles()
         return
 
+    if not args.artist:
+        raise SystemExit("--artist is required unless --list-profiles is used.")
+
+    request = RunRequest(
+        artist=args.artist,
+        profile_key=args.profile,
+        age_range=args.age_range,
+        genres=(item.strip() for item in (args.genres or "").split(",") if item.strip())
+        if args.genres
+        else None,
+        mood=args.mood,
+        search_limit=args.search_limit,
+        clip_count=args.clip_count,
+        clip_seconds=args.clip_seconds,
+        mock_overlays=args.mock_overlays,
+        drive_folder_id=args.drive_folder_id,
+    )
+
     try:
-        output_path = asyncio.run(run_agent(args))
+        result = run_generation_sync(request)
     except KeyboardInterrupt:
         LOGGER.warning("Cancelled by user.")
         raise SystemExit(130)
@@ -204,7 +120,12 @@ def main() -> None:
         LOGGER.error("%s", exc)
         raise SystemExit(1)
 
-    print(f"Created video: {output_path}")
+    print("Uploaded video to Google Drive:")
+    print(f"  File ID: {result.file_id}")
+    if result.web_view_link:
+        print(f"  View Link: {result.web_view_link}")
+    if result.web_content_link:
+        print(f"  Download Link: {result.web_content_link}")
 
 
 if __name__ == "__main__":

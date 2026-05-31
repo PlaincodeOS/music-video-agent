@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Break Records – Video Generator</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0f1115;
+        --card: #171a21;
+        --text: #e6e6e6;
+        --muted: #9aa3b2;
+        --accent: #7c9cff;
+        --border: #2b3140;
+        --success: #6ae3a1;
+        --error: #ff7b7b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      .container {
+        max-width: 820px;
+        margin: 0 auto;
+        padding: 40px 20px 80px;
+      }
+      header {
+        margin-bottom: 24px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+      }
+      p {
+        margin: 0;
+        color: var(--muted);
+      }
+      .card {
+        margin-top: 24px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 24px;
+      }
+      form {
+        display: grid;
+        gap: 16px;
+      }
+      label {
+        display: grid;
+        gap: 6px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+      input, select {
+        padding: 12px 14px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0f131b;
+        color: var(--text);
+        font-size: 15px;
+      }
+      .grid {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      }
+      button {
+        padding: 12px 16px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: #0b0d13;
+        font-weight: 600;
+        font-size: 15px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .status {
+        margin-top: 16px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #0f131b;
+        min-height: 56px;
+      }
+      .status.success { border-color: var(--success); }
+      .status.error { border-color: var(--error); }
+      .links a { color: var(--accent); }
+      video {
+        width: 100%;
+        margin-top: 16px;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+      }
+      .hint { font-size: 12px; color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>Break Records Video Generator</h1>
+        <p>Generate a short-form promo video and upload it to Google Drive.</p>
+      </header>
+
+      <div class="card">
+        <form id="generator-form">
+          <label>
+            Artist name
+            <input name="artist" placeholder="SZA" required />
+          </label>
+
+          <div class="grid">
+            <label>
+              Profile
+              <select name="profile">
+                <option value="gen_z_rnb">Gen Z R&B / Pop</option>
+                <option value="millennial_indie">Millennial Indie</option>
+                <option value="hype_rap">Hype Rap / Trap</option>
+                <option value="pop_country">Pop Country</option>
+              </select>
+            </label>
+            <label>
+              Clip count
+              <input name="clip_count" type="number" min="2" max="6" value="3" />
+            </label>
+            <label>
+              Clip seconds
+              <input name="clip_seconds" type="number" min="5" max="15" step="0.5" value="10" />
+            </label>
+          </div>
+
+          <div class="grid">
+            <label>
+              Age range (optional)
+              <input name="age_range" placeholder="18-24" />
+            </label>
+            <label>
+              Genres (optional, comma-separated)
+              <input name="genres" placeholder="R&B, Pop" />
+            </label>
+          </div>
+
+          <label>
+            Mood (optional)
+            <input name="mood" placeholder="Aesthetic, emotional" />
+          </label>
+
+          <div class="grid">
+            <label>
+              Drive folder ID (optional)
+              <input name="drive_folder_id" placeholder="1AbC..." />
+            </label>
+            <label>
+              Mock overlays
+              <select name="mock_overlays">
+                <option value="false" selected>False</option>
+                <option value="true">True</option>
+              </select>
+            </label>
+          </div>
+
+          <button type="submit" id="submit-btn">Generate</button>
+          <div class="hint">Uses the server-side Google service account credentials to upload to Drive.</div>
+        </form>
+      </div>
+
+      <div id="status" class="status">Idle.</div>
+      <div id="links" class="links"></div>
+      <video id="preview" controls playsinline hidden></video>
+    </div>
+
+    <script>
+      const form = document.getElementById("generator-form");
+      const statusEl = document.getElementById("status");
+      const linksEl = document.getElementById("links");
+      const previewEl = document.getElementById("preview");
+      const submitBtn = document.getElementById("submit-btn");
+
+      function setStatus(message, type) {
+        statusEl.textContent = message;
+        statusEl.className = "status" + (type ? ` ${type}` : "");
+      }
+
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        submitBtn.disabled = true;
+        linksEl.innerHTML = "";
+        previewEl.hidden = true;
+        previewEl.src = "";
+        setStatus("Generating video... this can take a few minutes.");
+
+        const formData = new FormData(form);
+        const payload = Object.fromEntries(formData.entries());
+
+        if (payload.mock_overlays) {
+          payload.mock_overlays = payload.mock_overlays === "true";
+        }
+        if (payload.clip_count) payload.clip_count = Number(payload.clip_count);
+        if (payload.clip_seconds) payload.clip_seconds = Number(payload.clip_seconds);
+
+        if (!payload.age_range) delete payload.age_range;
+        if (!payload.genres) delete payload.genres;
+        if (!payload.mood) delete payload.mood;
+        if (!payload.drive_folder_id) delete payload.drive_folder_id;
+
+        try {
+          const response = await fetch("/api/generate/", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+
+          if (!response.ok) {
+            setStatus(data.error || "Generation failed.", "error");
+            return;
+          }
+
+          setStatus("Uploaded to Google Drive.", "success");
+
+          const links = [];
+          if (data.web_view_link) {
+            links.push(`<p><a href="${data.web_view_link}" target="_blank">Open in Google Drive</a></p>`);
+          }
+          if (data.web_content_link) {
+            links.push(`<p><a href="${data.web_content_link}" target="_blank">Direct download</a></p>`);
+            previewEl.src = data.web_content_link;
+            previewEl.hidden = false;
+          }
+          linksEl.innerHTML = links.join("");
+        } catch (err) {
+          setStatus("Unexpected error. Check server logs.", "error");
+        } finally {
+          submitBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

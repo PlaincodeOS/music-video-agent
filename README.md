@@ -1,4 +1,4 @@
-# Break Records PoC - AI Music Video Agent
+# Break Records PoC - AI Music Video Agent (Django)
 
 The AI Music Video Agent helps music artists and labels quickly create social-ready promotional clips. The MVP uses hardcoded audience profiles and YouTube as the clip source, while keeping the path open for Spotify API signals and additional media sources later.
 
@@ -18,6 +18,7 @@ The first version should:
 - Generate short AI-written overlay text.
 - Render clean white bottom-center text.
 - Export a 1080x1920 H.264 MP4 between 15 and 30 seconds.
+- Upload the final MP4 to Google Drive instead of writing to a local output directory.
 
 Spotify API integration, owned media libraries, and additional clip sources are planned future enhancements, not MVP requirements.
 
@@ -27,11 +28,11 @@ Spotify API integration, owned media libraries, and additional clip sources are 
 - Audience age range
 - Genres
 - Mood or vibe
-- Optional output path
+- Optional Google Drive folder ID
 
 ## Expected Output
 
-- MP4 file
+- MP4 file uploaded to Google Drive
 - H.264 video with AAC audio
 - 1080x1920 portrait format
 - Duration between 15 and 30 seconds
@@ -45,12 +46,15 @@ Spotify API integration, owned media libraries, and additional clip sources are 
 3. Download short clip sections with `yt-dlp`.
 4. Generate one-line overlays with Claude Haiku.
 5. Render overlays and compose the final MP4 with FFmpeg.
+6. Upload the final MP4 to Google Drive and clean up temporary files.
 
 ## Technical Direction
 
 - Python 3.9+
 - Claude Haiku API for overlay generation
 - FFmpeg and `ffmpeg-python` for video processing
+- Django API for hosting
+- Google Drive API for uploads
 - `youtube-search-python` for search
 - `yt-dlp` for downloads
 - `asyncio` for orchestration
@@ -88,7 +92,45 @@ Set your Anthropic API key:
 
 ```bash
 ANTHROPIC_API_KEY=your_api_key_here
+
+# Django settings
+DJANGO_SECRET_KEY=change-me
+DJANGO_DEBUG=false
+DJANGO_ALLOWED_HOSTS=*
+
+# Google Drive upload settings
+# Path to your service account JSON key
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
+# Optional folder ID to upload videos into
+GDRIVE_FOLDER_ID=
+# Set true to make uploaded videos public
+GDRIVE_PUBLIC=false
 ```
+
+## Running the Django API
+
+Start the Django server:
+
+```bash
+python manage.py runserver
+```
+
+Open the web UI at `/api/` to submit video generation requests from a form.
+
+Send a POST request to `/api/generate/` with JSON similar to:
+
+```json
+{
+	"artist": "SZA",
+	"profile": "gen_z_rnb",
+	"clip_count": 3,
+	"clip_seconds": 10,
+	"mock_overlays": false,
+	"drive_folder_id": "optional-folder-id"
+}
+```
+
+The response includes a Google Drive `file_id` and share links if available.
 
 ## Future Enhancements
 
