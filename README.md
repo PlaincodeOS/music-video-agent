@@ -103,6 +103,8 @@ DJANGO_ALLOWED_HOSTS=*
 GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/service-account.json
 # Optional folder ID to upload videos into
 GDRIVE_FOLDER_ID=
+# Optional shared drive ID (required for service accounts without storage quota)
+GDRIVE_SHARED_DRIVE_ID=
 # Set true to make uploaded videos public
 GDRIVE_PUBLIC=false
 ```
