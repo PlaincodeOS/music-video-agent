@@ -111,7 +111,12 @@ def download_one_clip(
     ydl_opts = {
         "download_ranges": download_range_func(None, [(0, clip_seconds)]),
         "force_keyframes_at_cuts": True,
-        "format": "bv*[height<=1080]+ba/b[height<=1080]/best",
+        "format": (
+            "bestvideo[height<=1080]+bestaudio/"
+            "best[height<=1080]/"
+            "bestvideo+bestaudio/"
+            "best"
+        ),
         "merge_output_format": "mp4",
         "noplaylist": True,
         "no_warnings": True,
