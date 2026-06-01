@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,13 +24,32 @@ class DriveUploadResult:
     web_content_link: Optional[str]
 
 
-def build_drive_service():
-    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    if not credentials_path:
-        raise RuntimeError("GOOGLE_APPLICATION_CREDENTIALS is not set.")
+def _load_service_account_info() -> dict:
+    json_value = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if json_value:
+        return json.loads(json_value)
 
-    creds = service_account.Credentials.from_service_account_file(
-        credentials_path,
+    json_b64 = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON_BASE64")
+    if json_b64:
+        decoded = base64.b64decode(json_b64).decode("utf-8")
+        return json.loads(decoded)
+
+    credentials_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    if credentials_path:
+        with open(credentials_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    raise RuntimeError(
+        "Google service account credentials are not set. Provide "
+        "GOOGLE_SERVICE_ACCOUNT_JSON, GOOGLE_SERVICE_ACCOUNT_JSON_BASE64, "
+        "or GOOGLE_APPLICATION_CREDENTIALS."
+    )
+
+
+def build_drive_service():
+    service_account_info = _load_service_account_info()
+    creds = service_account.Credentials.from_service_account_info(
+        service_account_info,
         scopes=SCOPES,
     )
     return build("drive", "v3", credentials=creds, cache_discovery=False)
