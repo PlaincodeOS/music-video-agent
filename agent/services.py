@@ -38,9 +38,19 @@ def build_request_from_payload(payload: dict) -> ApiRequest:
         search_limit=int(payload.get("search_limit", 5)),
         clip_count=int(payload.get("clip_count", 3)),
         clip_seconds=float(payload.get("clip_seconds", 10.0)),
-        mock_overlays=bool(payload.get("mock_overlays", False)),
+        mock_overlays=parse_bool(payload.get("mock_overlays", False)),
         drive_folder_id=payload.get("drive_folder_id"),
     )
+
+
+def parse_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def run_generation(request: ApiRequest):

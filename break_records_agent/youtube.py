@@ -15,6 +15,27 @@ from break_records_agent.models import ClipCandidate, DownloadedClip
 
 LOGGER = logging.getLogger(__name__)
 
+YTDLP_FORMAT = (
+    "best[height<=720][ext=mp4]/"
+    "best[ext=mp4]/"
+    "best[height<=720]/"
+    "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
+    "bestvideo[height<=720]+bestaudio/"
+    "bestvideo+bestaudio/"
+    "18/22/best"
+)
+
+
+class YtdlpLogger:
+    def debug(self, message: str) -> None:
+        LOGGER.debug("yt-dlp: %s", message)
+
+    def warning(self, message: str) -> None:
+        LOGGER.warning("yt-dlp: %s", message)
+
+    def error(self, message: str) -> None:
+        LOGGER.error("yt-dlp: %s", message)
+
 
 async def search_clips(
     query: str,
@@ -111,18 +132,18 @@ def download_one_clip(
     ydl_opts = {
         "download_ranges": download_range_func(None, [(0, clip_seconds)]),
         "force_keyframes_at_cuts": True,
-        "format": (
-            "bestvideo[height<=1080]+bestaudio/"
-            "best[height<=1080]/"
-            "bestvideo+bestaudio/"
-            "best"
-        ),
+        "format": YTDLP_FORMAT,
+        "format_sort": ["res:720", "ext:mp4:m4a"],
+        "logger": YtdlpLogger(),
         "merge_output_format": "mp4",
         "noplaylist": True,
-        "no_warnings": True,
+        "no_warnings": False,
         "outtmpl": outtmpl,
         "quiet": True,
     }
+    deno_path = find_deno_path()
+    if deno_path:
+        ydl_opts["js_runtimes"] = {"deno": {"path": deno_path}}
 
     temp_cookie_file = None
     cookie_file = os.getenv("YTDLP_COOKIES_FILE")
@@ -167,3 +188,16 @@ def download_one_clip(
     duration = str(info.get("duration") or candidate.duration or "")
     downloaded_candidate = ClipCandidate(title=title, url=candidate.url, duration=duration)
     return DownloadedClip(candidate=downloaded_candidate, path=media_path, index=index)
+
+
+def find_deno_path() -> str | None:
+    try:
+        import deno
+    except ImportError:
+        return None
+
+    try:
+        return str(deno.find_deno_bin())
+    except Exception as exc:
+        LOGGER.warning("Installed deno package did not provide a usable binary: %s", exc)
+        return None
