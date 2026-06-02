@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 import logging
-import os
-import tempfile
 from pathlib import Path
 from typing import Iterable, List
 
@@ -124,35 +121,8 @@ def download_one_clip(
         "quiet": True,
     }
 
-    temp_cookie_file = None
-    cookie_file = os.getenv("YTDLP_COOKIES_FILE")
-    cookie_text = os.getenv("YTDLP_COOKIES")
-    cookie_b64 = os.getenv("YTDLP_COOKIES_BASE64")
-    if cookie_text or cookie_b64:
-        if cookie_b64 and not cookie_text:
-            cookie_text = base64.b64decode(cookie_b64).decode("utf-8")
-        temp_cookie_file = tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".txt",
-            prefix="yt_cookies_",
-            delete=False,
-        )
-        temp_cookie_file.write(cookie_text or "")
-        temp_cookie_file.flush()
-        cookie_file = temp_cookie_file.name
-
-    if cookie_file:
-        ydl_opts["cookiefile"] = cookie_file
-
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(candidate.url, download=True)
-    finally:
-        if temp_cookie_file:
-            try:
-                os.unlink(temp_cookie_file.name)
-            except OSError:
-                LOGGER.warning("Failed to remove temp cookie file.")
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(candidate.url, download=True)
 
     files = [
         path
