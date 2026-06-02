@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 from typing import Iterable, List
 
@@ -11,6 +12,16 @@ from break_records_agent.models import ClipCandidate, DownloadedClip
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def resolve_cookie_file() -> Path | None:
+    env_path = os.getenv("YTDLP_COOKIES")
+    if env_path:
+        candidate = Path(env_path).expanduser()
+        return candidate if candidate.exists() else None
+
+    default = Path(__file__).resolve().parents[1] / "cookies-youtube-com.txt"
+    return default if default.exists() else None
 
 
 async def search_clips(
@@ -120,6 +131,11 @@ def download_one_clip(
         "outtmpl": outtmpl,
         "quiet": True,
     }
+
+    cookie_file = resolve_cookie_file()
+    if cookie_file:
+        ydl_opts["cookiefile"] = str(cookie_file)
+        LOGGER.info("Using yt-dlp cookies from %s", cookie_file)
 
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(candidate.url, download=True)
