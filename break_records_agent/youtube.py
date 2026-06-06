@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from pathlib import Path
 from typing import Iterable, List
 
@@ -14,16 +13,6 @@ from break_records_agent.models import ClipCandidate, DownloadedClip
 LOGGER = logging.getLogger(__name__)
 
 
-def resolve_cookie_file() -> Path | None:
-    env_path = os.getenv("YTDLP_COOKIES")
-    if env_path:
-        candidate = Path(env_path).expanduser()
-        return candidate if candidate.exists() else None
-
-    default = Path(__file__).resolve().parents[1] / "cookies-youtube-com.txt"
-    return default if default.exists() else None
-
-
 async def search_clips(
     query: str,
     limit: int = 5,
@@ -31,11 +20,15 @@ async def search_clips(
     try:
         from youtubesearchpython.__future__ import VideosSearch
     except ImportError:
-        return await asyncio.to_thread(search_clips_sync, query=query, limit=limit)
+        return await asyncio.to_thread(search_clips_with_ytdlp_sync, query=query, limit=limit)
 
-    search = VideosSearch(query, limit=limit)
-    response = await search.next()
-    return parse_search_response(response)
+    try:
+        search = VideosSearch(query, limit=limit)
+        response = await search.next()
+        return parse_search_response(response)
+    except Exception as exc:
+        LOGGER.warning("youtube-search-python failed; falling back to yt-dlp search: %s", exc)
+        return await asyncio.to_thread(search_clips_with_ytdlp_sync, query=query, limit=limit)
 
 
 def search_clips_sync(query: str, limit: int) -> List[ClipCandidate]:
@@ -47,8 +40,33 @@ def search_clips_sync(query: str, limit: int) -> List[ClipCandidate]:
             "pip install -r requirements.txt"
         ) from exc
 
-    response = VideosSearch(query, limit=limit).result()
-    return parse_search_response(response)
+    try:
+        response = VideosSearch(query, limit=limit).result()
+        return parse_search_response(response)
+    except Exception as exc:
+        LOGGER.warning("youtube-search-python failed; falling back to yt-dlp search: %s", exc)
+        return search_clips_with_ytdlp_sync(query=query, limit=limit)
+
+
+def search_clips_with_ytdlp_sync(query: str, limit: int) -> List[ClipCandidate]:
+    try:
+        from yt_dlp import YoutubeDL
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing yt-dlp package. Activate .venv and run: pip install -r requirements.txt"
+        ) from exc
+
+    ydl_opts = {
+        "extract_flat": "in_playlist",
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+    }
+
+    with YoutubeDL(ydl_opts) as ydl:
+        response = ydl.extract_info(f"ytsearch{limit}:{query}", download=False)
+
+    return parse_ytdlp_search_response(response)
 
 
 def parse_search_response(response: dict) -> List[ClipCandidate]:
@@ -65,6 +83,27 @@ def parse_search_response(response: dict) -> List[ClipCandidate]:
                 duration=item.get("duration") or "",
             )
         )
+    return candidates
+
+
+def parse_ytdlp_search_response(response: dict) -> List[ClipCandidate]:
+    candidates: List[ClipCandidate] = []
+    for item in response.get("entries") or []:
+        if not item:
+            continue
+
+        title = item.get("title")
+        url = item.get("webpage_url") or item.get("original_url") or item.get("url")
+        video_id = item.get("id")
+        if url and not url.startswith("http") and video_id:
+            url = f"https://www.youtube.com/watch?v={video_id}"
+
+        if not title or not url:
+            continue
+
+        duration = item.get("duration_string") or item.get("duration") or ""
+        candidates.append(ClipCandidate(title=title, url=url, duration=str(duration)))
+
     return candidates
 
 
@@ -131,11 +170,6 @@ def download_one_clip(
         "outtmpl": outtmpl,
         "quiet": True,
     }
-
-    cookie_file = resolve_cookie_file()
-    if cookie_file:
-        ydl_opts["cookiefile"] = str(cookie_file)
-        LOGGER.info("Using yt-dlp cookies from %s", cookie_file)
 
     with YoutubeDL(ydl_opts) as ydl:
         info = ydl.extract_info(candidate.url, download=True)

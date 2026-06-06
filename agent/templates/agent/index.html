@@ -94,6 +94,42 @@
       .status.success { border-color: var(--success); }
       .status.error { border-color: var(--error); }
       .links a { color: var(--accent); }
+      .history {
+        margin-top: 16px;
+        display: grid;
+        gap: 10px;
+      }
+      .history h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+      .history-list {
+        display: grid;
+        gap: 8px;
+      }
+      .history-item {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #0f131b;
+      }
+      .history-item a { color: var(--accent); }
+      .history-meta {
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+      }
+      .history-title {
+        overflow-wrap: anywhere;
+      }
+      .history-date {
+        color: var(--muted);
+        font-size: 12px;
+      }
       video {
         width: 100%;
         margin-top: 16px;
@@ -179,14 +215,127 @@
       <div id="status" class="status">Idle.</div>
       <div id="links" class="links"></div>
       <video id="preview" controls playsinline hidden></video>
+      <div id="history" class="history" hidden>
+        <h2>Generated videos</h2>
+        <div id="history-list" class="history-list"></div>
+      </div>
     </div>
 
     <script>
+      const HISTORY_DB_NAME = "break-records-video-history";
+      const HISTORY_DB_VERSION = 1;
+      const HISTORY_STORE_NAME = "generatedVideos";
+      const MAX_HISTORY_ITEMS = 25;
+
       const form = document.getElementById("generator-form");
       const statusEl = document.getElementById("status");
       const linksEl = document.getElementById("links");
       const previewEl = document.getElementById("preview");
       const submitBtn = document.getElementById("submit-btn");
+      const historyEl = document.getElementById("history");
+      const historyListEl = document.getElementById("history-list");
+
+      function openHistoryDb() {
+        return new Promise((resolve, reject) => {
+          const request = indexedDB.open(HISTORY_DB_NAME, HISTORY_DB_VERSION);
+
+          request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(HISTORY_STORE_NAME)) {
+              db.createObjectStore(HISTORY_STORE_NAME, { keyPath: "fileId" });
+            }
+          };
+
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+      }
+
+      async function withHistoryStore(mode, callback) {
+        const db = await openHistoryDb();
+        return new Promise((resolve, reject) => {
+          const transaction = db.transaction(HISTORY_STORE_NAME, mode);
+          const store = transaction.objectStore(HISTORY_STORE_NAME);
+          const result = callback(store);
+
+          transaction.oncomplete = () => {
+            db.close();
+            resolve(result);
+          };
+          transaction.onerror = () => {
+            db.close();
+            reject(transaction.error);
+          };
+        });
+      }
+
+      async function getGeneratedVideos() {
+        const records = await withHistoryStore("readonly", (store) => {
+          return new Promise((resolve, reject) => {
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+          });
+        });
+
+        return records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      }
+
+      async function saveGeneratedVideo(video) {
+        const createdAt = new Date().toISOString();
+        const record = { ...video, createdAt };
+
+        await withHistoryStore("readwrite", (store) => {
+          store.put(record);
+        });
+
+        const records = await getGeneratedVideos();
+        const staleRecords = records.slice(MAX_HISTORY_ITEMS);
+        if (staleRecords.length) {
+          await withHistoryStore("readwrite", (store) => {
+            staleRecords.forEach((item) => store.delete(item.fileId));
+          });
+        }
+      }
+
+      function renderGeneratedVideos(records) {
+        historyListEl.innerHTML = "";
+        historyEl.hidden = records.length === 0;
+
+        records.forEach((record) => {
+          const item = document.createElement("div");
+          item.className = "history-item";
+
+          const meta = document.createElement("div");
+          meta.className = "history-meta";
+
+          const title = document.createElement("div");
+          title.className = "history-title";
+          title.textContent = record.name || record.artist || "Generated video";
+
+          const date = document.createElement("div");
+          date.className = "history-date";
+          date.textContent = new Date(record.createdAt).toLocaleString();
+
+          const link = document.createElement("a");
+          link.href = record.webViewLink || record.webContentLink;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = "Open";
+
+          meta.append(title, date);
+          item.append(meta, link);
+          historyListEl.appendChild(item);
+        });
+      }
+
+      async function refreshGeneratedVideos() {
+        try {
+          renderGeneratedVideos(await getGeneratedVideos());
+        } catch (err) {
+          console.warn("Could not load generated video history.", err);
+        }
+      }
 
       function setStatus(message, type) {
         statusEl.textContent = message;
@@ -241,12 +390,27 @@
             previewEl.hidden = false;
           }
           linksEl.innerHTML = links.join("");
+
+          try {
+            await saveGeneratedVideo({
+              fileId: data.file_id || data.web_view_link || data.web_content_link || `${Date.now()}`,
+              name: data.name,
+              artist: payload.artist,
+              webViewLink: data.web_view_link,
+              webContentLink: data.web_content_link,
+            });
+            await refreshGeneratedVideos();
+          } catch (err) {
+            console.warn("Could not save generated video history.", err);
+          }
         } catch (err) {
           setStatus("Unexpected error. Check server logs.", "error");
         } finally {
           submitBtn.disabled = false;
         }
       });
+
+      refreshGeneratedVideos();
     </script>
   </body>
 </html>
